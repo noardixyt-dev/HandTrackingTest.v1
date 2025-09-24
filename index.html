@@ -6,7 +6,7 @@
 <title>Hand Tracking Test</title>
 <style>
   body { margin:0; overflow:hidden; background:black; font-family:sans-serif; }
-  #status { position:absolute; top:10px; left:10px; color:white; background:rgba(0,0,0,0.5); padding:5px 10px; border-radius:5px; }
+  #status { position:absolute; top:10px; left:10px; color:white; background:rgba(0,0,0,0.5); padding:5px 10px; border-radius:5px; z-index:10; }
 </style>
 </head>
 <body>
@@ -21,7 +21,7 @@ let handMesh = null;
 let pinchStatus = document.getElementById('status');
 let video = null;
 
-// Initialize Three.js scene
+// Initialize Three.js
 scene = new THREE.Scene();
 camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 100);
 camera.position.set(0,0,2);
@@ -33,7 +33,7 @@ document.body.appendChild(renderer.domElement);
 const light = new THREE.HemisphereLight(0xffffff,0x444444,1);
 scene.add(light);
 
-// Create a simple hand model: a sphere for palm
+// 3D hand sphere
 const geometry = new THREE.SphereGeometry(0.05,16,16);
 const material = new THREE.MeshStandardMaterial({color:0x00ff00});
 handMesh = new THREE.Mesh(geometry, material);
@@ -45,7 +45,7 @@ window.addEventListener('resize',()=>{
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Setup MediaPipe Hands
+// Hand tracking setup
 const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
 hands.setOptions({
   maxNumHands: 1,
@@ -55,36 +55,53 @@ hands.setOptions({
 });
 hands.onResults(onResults);
 
-// Start camera
-video = document.createElement('video');
-video.autoplay = true;
-video.playsInline = true;
-video.muted = true;
+// Force camera permission prompt immediately
+async function initCamera() {
+  try {
+    video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
 
-navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
-  .then(stream=>{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
     video.srcObject = stream;
-    video.play();
-    const mpCamera = new Camera(video, {onFrame: async()=>{await hands.send({image:video})}, width:640, height:480});
+    await video.play();
+
+    // Video texture for Three.js background
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+    videoTexture.format = THREE.RGBFormat;
+    scene.background = videoTexture;
+
+    const mpCamera = new Camera(video, {
+      onFrame: async () => { await hands.send({image: video}); },
+      width: 640,
+      height: 480
+    });
     mpCamera.start();
-  })
-  .catch(e=>{console.error("Camera error:", e); alert("Camera access failed");});
+
+  } catch(e) {
+    console.error("Camera access error:", e);
+    alert("Camera permission denied or unavailable. Please allow camera to use this app.");
+  }
+}
 
 // Hand tracking results
 let isPinched = false;
 function onResults(results){
   if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
     const lm = results.multiHandLandmarks[0];
-    // Simple pinch detection: thumb tip to index tip distance
+    // pinch detection: thumb tip to index tip
     const dx = lm[4].x - lm[8].x;
     const dy = lm[4].y - lm[8].y;
     const dist = Math.sqrt(dx*dx + dy*dy);
     isPinched = dist < 0.05;
     pinchStatus.textContent = "Pinch: " + (isPinched ? "Yes" : "No");
-    
-    // Move 3D hand model to match palm position
-    const palm = lm[0]; // wrist as reference
-    handMesh.position.set((palm.x-0.5)*2, (0.5-palm.y)*2, -palm.z*2);
+
+    // move 3D sphere with wrist
+    const wrist = lm[0];
+    handMesh.position.set((wrist.x-0.5)*2, (0.5-wrist.y)*2, -wrist.z*2);
   } else {
     pinchStatus.textContent = "Pinch: No";
   }
@@ -95,7 +112,11 @@ function animate(){
   requestAnimationFrame(animate);
   renderer.render(scene,camera);
 }
+
+// Start
+initCamera();
 animate();
+
 </script>
 </body>
 </html>
